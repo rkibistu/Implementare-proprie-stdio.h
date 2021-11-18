@@ -42,6 +42,7 @@ FUNC_DECL_PREFIX HANDLE so_fileno(SO_FILE* stream);
 
 FUNC_DECL_PREFIX int so_fflush(SO_FILE* stream);
 
+
 FUNC_DECL_PREFIX int so_fseek(SO_FILE* stream, long offset, int whence);
 FUNC_DECL_PREFIX long so_ftell(SO_FILE* stream);
 
