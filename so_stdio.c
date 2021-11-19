@@ -145,7 +145,7 @@ int so_fflush(SO_FILE* stream) {
 	}
 
 	stream->_write_ptr = stream->_buffer_base; //invalidam tot ce era scris pana amu, aducem cursoru de scris la inceput
-	stream->_write_ptr_end = stream->_write_ptr;
+	stream->_write_ptr_end = stream->_buffer_end;
 	
 	stream->_read_ptr = stream->_buffer_base;
 	stream->_read_ptr_end = stream->_read_ptr;
@@ -182,9 +182,49 @@ long so_ftell(SO_FILE* stream) {
 
 size_t so_fread(void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
+	int indexNmemb;
+	int indexSize;
+	size_t bytesReadTotal = 0;
+	char* element = (char*)malloc(sizeof(char) * size);
+	
+	if (size == 0 || nmemb == 0)
+		return 0;
+
+	for (indexNmemb = 0; indexNmemb < nmemb; indexNmemb++) {
+	
+		for (indexSize = 0; indexSize < size; indexSize++) {
+
+			element[indexSize] = so_fgetc(stream);
+			if (element[indexSize] == SO_EOF) {
+
+				free(element);
+				return bytesReadTotal;
+			}
+		}
+
+		memcpy((char*)ptr + indexNmemb*size, element, size);
+		bytesReadTotal += size;
+	}
+
+	free(element);
+	return bytesReadTotal;
 }
 size_t so_fwrite(const void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
+	int index;
+	int ret;
+	size_t bytesWrittenTotal = 0;
+
+	for(index = 0; index < size* nmemb; index++) {
+	
+		ret = so_fputc(((unsigned char*)ptr)[index], stream);
+		if (ret == SO_EOF) {
+		
+			return bytesWrittenTotal;
+		}
+		bytesWrittenTotal++;
+	}
+	return bytesWrittenTotal;
 }
 
 int so_fgetc(SO_FILE* stream) {
@@ -243,6 +283,7 @@ int so_fputc(int c, SO_FILE* stream) {
 	if (stream->_append) {
 
 		//muta cursor la final
+		so_fseek(stream, 0, SEEK_END);
 	}
 
 	if (stream->_write_ptr == stream->_write_ptr_end) {
@@ -255,6 +296,7 @@ int so_fputc(int c, SO_FILE* stream) {
 	stream->_write_ptr[0] = c;
 	stream->_write_ptr++;
 	stream->_file_pointer_pos++;
+	return c;
 }
 
 int so_feof(SO_FILE* stream) {
@@ -446,7 +488,7 @@ static SO_FILE* OpenFileModeAppendUpdate(const char* pathname) {
 
 	so_file->_canRead = SO_TRUE;
 	so_file->_canWrite = SO_TRUE;
-	so_file->_append = SO_FALSE;
+	so_file->_append = SO_TRUE;
 	so_file->_update = SO_TRUE;
 
 	return so_file;

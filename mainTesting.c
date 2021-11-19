@@ -11,20 +11,22 @@ int _main() {
 		return 0;
 	}
 
-	for (int i = 0; i < 3; i++) {
 
-		printf("%c", fgetc(file));
-	}
+	size_t bytes_read;
+	char buf[10];
 
 	
-	for (int i = 0; i < 5; i++) {
+	bytes_read = fread(buf, sizeof(buf), 1, file);
+	buf[9] = '\0';
+	printf("%d sir:\n%s", bytes_read, buf);
 
-		fputc('a', file);
-	}
-	
-	for (int i = 0; i < 5; i++) {
+	//int* intarray = (int*)malloc(sizeof(int) * 5);
+	//fread((int*)intarray, sizeof(int), 5, file);
 
-		fputc('b', file);
-	}
+	//for (int i = 0; i < 5; i++) {
+
+	//	printf("%d  ", intarray[i]);
+	//}
+
  	fclose(file);
 }
