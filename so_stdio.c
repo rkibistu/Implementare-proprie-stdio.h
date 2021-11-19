@@ -11,7 +11,7 @@
 #define SO_TRUE 1
 #define SO_FALSE 0
 
-#define SO_BUFFER_SIZE 15
+#define SO_BUFFER_SIZE 5
 
 struct _so_file {
 
@@ -43,6 +43,8 @@ struct _so_file {
 	//flaguri+
 	int _feof;
 	int _ferror;
+
+	long _file_pointer_pos;
 };
 
 // Deschidere fisiere, in diferite moduri
@@ -93,6 +95,8 @@ SO_FILE* so_fopen(const char* pathname, const char* mode) {
 		file->_write_ptr_end = file->_buffer_end;
 
 		file->_feof = SO_FALSE;
+
+		file->_file_pointer_pos = 0;	//pozitia cursorului in fiser!
 	}
 	return file;
 }
@@ -114,9 +118,13 @@ int so_fclose(SO_FILE* stream) {
 }
 
 #if defined(__linux__)
-int so_fileno(SO_FILE* stream);
+int so_fileno(SO_FILE* stream) {
+
+}
 #elif defined(_WIN32)
-HANDLE so_fileno(SO_FILE* stream);
+HANDLE so_fileno(SO_FILE* stream) {
+	return stream->_hFile;
+}
 #else
 #error "Unknown platform"
 #endif
@@ -137,15 +145,45 @@ int so_fflush(SO_FILE* stream) {
 	}
 
 	stream->_write_ptr = stream->_buffer_base; //invalidam tot ce era scris pana amu, aducem cursoru de scris la inceput
+	stream->_write_ptr_end = stream->_write_ptr;
+	
 	stream->_read_ptr = stream->_buffer_base;
+	stream->_read_ptr_end = stream->_read_ptr;
+	
 
 	return 0; 
 }
 
 int so_fseek(SO_FILE* stream, long offset, int whence) {
 
+	long ret;
+
+#if defined(__linux__)
+	
+#elif defined(_WIN32)
+	ret = SetFilePointer(stream->_hFile, offset, NULL, whence);
+	if (ret == INVALID_SET_FILE_POINTER) {
+		PRINT_MY_ERROR("SetFilePointer");
+		return -1;
+	}
+#else
+#error "Unknown platform"
+#endif
+
+	so_fflush(stream);
+	stream->_feof = 0;
+	stream->_file_pointer_pos = ret;	//actaulizam pozitia pointerului la cursor
+	return 0;
 }
 long so_ftell(SO_FILE* stream) {
+
+	return stream->_file_pointer_pos;
+}
+
+size_t so_fread(void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
+
+}
+size_t so_fwrite(const void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
 }
 
@@ -179,7 +217,9 @@ int so_fgetc(SO_FILE* stream) {
 	if (!stream->_feof) {
 		readChar = stream->_read_ptr[0];
 		stream->_read_ptr++;
+		stream->_file_pointer_pos++;
 	}
+
 
 	return readChar;
 }
@@ -214,13 +254,16 @@ int so_fputc(int c, SO_FILE* stream) {
 
 	stream->_write_ptr[0] = c;
 	stream->_write_ptr++;
+	stream->_file_pointer_pos++;
 }
 
 int so_feof(SO_FILE* stream) {
 
 	return stream->_feof;
 }
-
+int so_ferror(SO_FILE* stream) {
+	return stream->_ferror;
+}
 
 static SO_FILE*  OpenFileModeRead(const char* pathname) {
 
