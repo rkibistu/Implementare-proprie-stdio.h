@@ -24,6 +24,8 @@
 
 #define SO_EOF (-1)
 
+#define SO_NEED_FLUSH 101
+
 struct _so_file;
 
 typedef struct _so_file SO_FILE;

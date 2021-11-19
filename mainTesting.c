@@ -4,25 +4,27 @@
 int _main() {
 
 
-	FILE* f = fopen("test.txt", "r+");
-	if (f == NULL) {
+	FILE* file = fopen("out.txt", "r+");
+	if (file == NULL) {
 
 		printf("error open");
 		return 0;
 	}
 
-	char buf[4];
-	int x = fread(buf, 1, sizeof(buf), f);
-	buf[x - 1] = '\0';
-	printf("\nBuf: %s", buf);
+	for (int i = 0; i < 3; i++) {
 
-	//fseek(f, 0, SEEK_END);
-	fflush(f);
+		printf("%c", fgetc(file));
+	}
 
-	x = fwrite(buf, 1, sizeof(buf), f);
-	printf("\nX: %d", x);
+	
+	for (int i = 0; i < 5; i++) {
 
-	fflush(f);
+		fputc('a', file);
+	}
+	
+	for (int i = 0; i < 5; i++) {
 
-	fclose(f);
+		fputc('b', file);
+	}
+ 	fclose(file);
 }

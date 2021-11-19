@@ -30,11 +30,11 @@ struct _so_file {
 	char* _write_ptr;		// NULL cand fisierul nu e deschis pentru scriere	;	pointeaza spre buffer in rest
 	char* _write_ptr_end;	// PTR spre finalul bufferului intern disponibil de scris
 
-	//flaguri - folosite in modurile de update
+	//flaguri - 
 	int _canRead;	// ia valoarea fals dupa o operatie de scriere	;	devine true dupa fflush/fseek
 	int _canWrite;	// ia valoarea fals dupa operatie de citire		;	devine true dupa fseek
-	int _update;
-	int _append;
+	int _update;	// modul update
+	int _append;	// modul append
 
 	//bufere - bufferele interne
 	char* _buffer_base;		//bufferul intern
@@ -113,6 +113,13 @@ int so_fclose(SO_FILE* stream) {
 	stream = NULL;
 }
 
+#if defined(__linux__)
+int so_fileno(SO_FILE* stream);
+#elif defined(_WIN32)
+HANDLE so_fileno(SO_FILE* stream);
+#else
+#error "Unknown platform"
+#endif
 
 int so_fflush(SO_FILE* stream) {
 
@@ -123,6 +130,11 @@ int so_fflush(SO_FILE* stream) {
 		if (ret != 0)
 			return ret;
 	}
+	if (stream->_update) {
+
+		stream->_canRead = SO_TRUE;
+		stream->_canWrite = SO_TRUE;
+	}
 
 	stream->_write_ptr = stream->_buffer_base; //invalidam tot ce era scris pana amu, aducem cursoru de scris la inceput
 	stream->_read_ptr = stream->_buffer_base;
@@ -130,15 +142,31 @@ int so_fflush(SO_FILE* stream) {
 	return 0; 
 }
 
+int so_fseek(SO_FILE* stream, long offset, int whence) {
 
+}
+long so_ftell(SO_FILE* stream) {
+
+}
 
 int so_fgetc(SO_FILE* stream) {
 
 	int readChar;
 	int ret;
 
-	if (!stream->_canRead || stream->_feof)
+	if (!stream->_canRead || stream->_feof) {
+
+		if (!stream->_canRead && stream->_update)
+			PRINT_MY_ERROR("FFLUSH NEDEED");
 		return SO_EOF;
+	}
+
+	if (stream->_update) {
+	
+		//o operatie de scriere trebuie urmata de uuna de fflush/fseek pentru a putea si scrie
+		//deci nu lasam sa se scrie
+		stream->_canWrite = SO_FALSE; 
+	}
 
 	if (stream->_read_ptr == stream->_read_ptr_end) {
 		//buffer intern gol sau plin -> populam buffer intern
@@ -152,15 +180,30 @@ int so_fgetc(SO_FILE* stream) {
 		readChar = stream->_read_ptr[0];
 		stream->_read_ptr++;
 	}
-	return readChar;
 
+	return readChar;
 }
 int so_fputc(int c, SO_FILE* stream) {
 
 	int ret;
 
-	if (!stream->_canWrite)
+	if (!stream->_canWrite) {
+
+		if (!stream->_canWrite && stream->_update)
+			PRINT_MY_ERROR("FFLUSH NEDEED");
 		return SO_EOF;
+	}
+
+	if (stream->_update) {
+			
+		//dupa o operatie de scriere e nevoie de fflush pentru a puteta citii;
+		stream->_canRead = SO_FALSE;
+	}
+
+	if (stream->_append) {
+
+		//muta cursor la final
+	}
 
 	if (stream->_write_ptr == stream->_write_ptr_end) {
 	
@@ -254,7 +297,7 @@ static SO_FILE* OpenFileModeAppend(const char* pathname) {
 
 
 #elif defined(_WIN32)
-	so_file->_hFile = CreateFileA(pathname, GENERIC_READ, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	so_file->_hFile = CreateFileA(pathname, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (so_file->_hFile == INVALID_HANDLE_VALUE) {
 		PRINT_MY_ERROR("CreateFile");
 		free(so_file);
