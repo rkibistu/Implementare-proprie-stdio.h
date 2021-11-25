@@ -3,14 +3,24 @@
 #define _DEBUG_
 #include "utils.h"
 
+#if defined(__linux__)
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#elif defined(_WIN32)
 #include <fileapi.h> //windows file api
+#else
+#error "Unknown platform"
+#endif
 #include <string.h>
 
 
 #define SO_TRUE 1
 #define SO_FALSE 0
 
-#define SO_BUFFER_SIZE 5
+#define SO_BUFFER_SIZE 4096
 
 struct _so_file {
 
@@ -44,6 +54,8 @@ struct _so_file {
 	int _ferror;
 
 	long _file_pointer_pos;
+
+	int ignore;
 };
 
 // Deschidere fisiere, in diferite moduri
@@ -96,7 +108,7 @@ SO_FILE* so_fopen(const char* pathname, const char* mode) {
 
 	if (file != NULL) {
 		file->_buffer_base = (char*)malloc(sizeof(char) * SO_BUFFER_SIZE);
-		file->_buffer_end = file->_buffer_base + SO_BUFFER_SIZE; 
+		file->_buffer_end = file->_buffer_base + SO_BUFFER_SIZE;
 
 		file->_read_ptr = file->_buffer_base;
 		file->_read_ptr_end = file->_read_ptr;
@@ -125,24 +137,24 @@ int so_fclose(SO_FILE* stream) {
 
 
 #if defined(__linux__)
-	
+	close(stream->_hFile);
 #elif defined(_WIN32)
 	CloseHandle(stream->_hFile);
 #else
 #error "Unknown platform"
 #endif
-	
+
 	free(stream);
 	stream = NULL;
 
 	return 0;
 }
 
-	
+
 
 #if defined(__linux__)
 int so_fileno(SO_FILE* stream) {
-
+	return stream->_hFile;
 }
 #elif defined(_WIN32)
 HANDLE so_fileno(SO_FILE* stream) {
@@ -169,12 +181,12 @@ int so_fflush(SO_FILE* stream) {
 
 	stream->_write_ptr = stream->_buffer_base; //invalidam tot ce era scris pana amu, aducem cursoru de scris la inceput
 	stream->_write_ptr_end = stream->_buffer_end;
-	
+
 	stream->_read_ptr = stream->_buffer_base;
 	stream->_read_ptr_end = stream->_read_ptr;
-	
 
-	return 0; 
+
+	return 0;
 }
 
 int so_fseek(SO_FILE* stream, long offset, int whence) {
@@ -182,7 +194,11 @@ int so_fseek(SO_FILE* stream, long offset, int whence) {
 	long ret;
 
 #if defined(__linux__)
-	
+	ret = lseek(stream->_hFile, offset, whence);
+	if (ret == -1) {
+		PRINT_MY_ERROR("lseek");
+		return -1;
+	}
 #elif defined(_WIN32)
 	ret = SetFilePointer(stream->_hFile, offset, NULL, whence);
 	if (ret == INVALID_SET_FILE_POINTER) {
@@ -208,29 +224,33 @@ size_t so_fread(void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 	size_t indexNmemb;
 	size_t indexSize;
 	size_t bytesReadTotal = 0;
+	int numberOfElementRead = 0;
 	char* element = (char*)malloc(sizeof(char) * size);
-	
+
 	if (size == 0 || nmemb == 0)
 		return 0;
 
 	for (indexNmemb = 0; indexNmemb < nmemb; indexNmemb++) {
-	
+
 		for (indexSize = 0; indexSize < size; indexSize++) {
 
 			element[indexSize] = so_fgetc(stream);
 			if (element[indexSize] == SO_EOF) {
 
-				free(element);
-				return bytesReadTotal;
+				if (stream->ignore == SO_FALSE) { /////////////////
+					free(element);
+					return bytesReadTotal;
+				}
+
 			}
 		}
-
-		memcpy((char*)ptr + indexNmemb*size, element, size);
+		numberOfElementRead++;
+		memcpy((char*)ptr + indexNmemb * size, element, size);
 		bytesReadTotal += size;
 	}
 
 	free(element);
-	return bytesReadTotal;
+	return numberOfElementRead;
 }
 size_t so_fwrite(const void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
@@ -238,22 +258,29 @@ size_t so_fwrite(const void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 	int ret;
 	size_t bytesWrittenTotal = 0;
 
-	for(index = 0; index < size* nmemb; index++) {
-	
+	int numberOfElementsWritten = 0;
+
+	for (index = 0; index < size * nmemb; index++) {
+
 		ret = so_fputc(((unsigned char*)ptr)[index], stream);
 		if (ret == SO_EOF) {
-		
+
 			return bytesWrittenTotal;
 		}
 		bytesWrittenTotal++;
+
+		if (index % size == 0)
+			numberOfElementsWritten++;
 	}
-	return bytesWrittenTotal;
+	return numberOfElementsWritten;
 }
 
 int so_fgetc(SO_FILE* stream) {
 
 	int readChar;
 	int ret;
+
+	stream->ignore = SO_FALSE;/////////////////////////////////////////////
 
 	if (!stream->_canRead || stream->_feof) {
 
@@ -263,14 +290,15 @@ int so_fgetc(SO_FILE* stream) {
 	}
 
 	if (stream->_update) {
-	
+
 		//o operatie de scriere trebuie urmata de uuna de fflush/fseek pentru a putea si scrie
 		//deci nu lasam sa se scrie
-		stream->_canWrite = SO_FALSE; 
+		stream->_canWrite = SO_FALSE;
 	}
 
 	if (stream->_read_ptr == stream->_read_ptr_end) {
 		//buffer intern gol sau plin -> populam buffer intern
+
 		ret = FillInternalBuffer(stream);
 		if (ret != SO_TRUE) {
 			return SO_EOF;
@@ -278,12 +306,16 @@ int so_fgetc(SO_FILE* stream) {
 	}
 
 	if (!stream->_feof) {
+
 		readChar = stream->_read_ptr[0];
+		if (readChar == -1) {
+			stream->ignore = SO_TRUE; ////////////////////////////////////////
+		}
 		stream->_read_ptr++;
 		stream->_file_pointer_pos++;
 	}
 
-
+	//printf("%d\n",readChar);
 	return readChar;
 }
 int so_fputc(int c, SO_FILE* stream) {
@@ -298,7 +330,7 @@ int so_fputc(int c, SO_FILE* stream) {
 	}
 
 	if (stream->_update) {
-			
+
 		//dupa o operatie de scriere e nevoie de fflush pentru a puteta citii;
 		stream->_canRead = SO_FALSE;
 	}
@@ -310,7 +342,7 @@ int so_fputc(int c, SO_FILE* stream) {
 	}
 
 	if (stream->_write_ptr == stream->_write_ptr_end) {
-	
+
 		ret = so_fflush(stream);
 		if (ret != 0)
 			return SO_EOF;
@@ -338,14 +370,14 @@ SO_FILE* so_popen(const char* command, const char* type) {
 	//int hFile;
 
 #elif defined(_WIN32)
-	
+
 	file = OpenPipeProcessWindows(command, type);
 #else
 #error "Unknown platform"
 #endif
 
 	return file;
-	
+
 }
 int so_pclose(SO_FILE* stream) {
 
@@ -376,7 +408,7 @@ int so_pclose(SO_FILE* stream) {
 	return 0;
 }
 
-static SO_FILE*  OpenFileModeRead(const char* pathname) {
+static SO_FILE* OpenFileModeRead(const char* pathname) {
 
 	SO_FILE* so_file = (SO_FILE*)malloc(sizeof(SO_FILE));
 	if (so_file == NULL) {
@@ -386,7 +418,12 @@ static SO_FILE*  OpenFileModeRead(const char* pathname) {
 	}
 
 #if defined(__linux__)
-	
+	so_file->_hFile = open(pathname, O_RDONLY);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 #elif defined(_WIN32)
 	so_file->_hFile = CreateFileA(pathname, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -417,7 +454,12 @@ static SO_FILE* OpenFileModeWrite(const char* pathname) {
 	}
 
 #if defined(__linux__)
-
+	so_file->_hFile = open(pathname, O_WRONLY | O_TRUNC | O_CREAT, 0664);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 #elif defined(_WIN32)
 	so_file->_hFile = CreateFileA(pathname, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -448,7 +490,12 @@ static SO_FILE* OpenFileModeAppend(const char* pathname) {
 	}
 
 #if defined(__linux__)
-
+	so_file->_hFile = open(pathname, O_APPEND | O_WRONLY | O_CREAT, 0644);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 #elif defined(_WIN32)
 	so_file->_hFile = CreateFileA(pathname, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -479,6 +526,12 @@ static SO_FILE* OpenFileModeReadUpdate(const char* pathname) {
 	}
 
 #if defined(__linux__)
+	so_file->_hFile = open(pathname, O_RDWR);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 
 #elif defined(_WIN32)
@@ -510,6 +563,12 @@ static SO_FILE* OpenFileModeWriteUpdate(const char* pathname) {
 	}
 
 #if defined(__linux__)
+	so_file->_hFile = open(pathname, O_RDWR | O_TRUNC | O_CREAT, 0644);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 
 #elif defined(_WIN32)
@@ -541,6 +600,12 @@ static SO_FILE* OpenFileModeAppendUpdate(const char* pathname) {
 	}
 
 #if defined(__linux__)
+	so_file->_hFile = open(pathname, O_APPEND | O_RDWR | O_CREAT, 0644);
+	if (so_file->_hFile == -1) {
+		PRINT_MY_ERROR("open");
+		free(so_file);
+		return NULL;
+	}
 
 
 #elif defined(_WIN32)
@@ -564,13 +629,20 @@ static SO_FILE* OpenFileModeAppendUpdate(const char* pathname) {
 }
 
 
-static int FillInternalBuffer(SO_FILE * stream) {
+static int FillInternalBuffer(SO_FILE* stream) {
 
 	int numberOfBytesRead = 0;
-
 #if defined(__linux__)
 	//citeste caracter
-	//if eraore -> return SO_EOF
+	numberOfBytesRead = read(stream->_hFile, stream->_buffer_base, SO_BUFFER_SIZE);
+	if (numberOfBytesRead == -1) {
+		PRINT_MY_ERROR("read");
+		return SO_EOF;
+	}
+	if (numberOfBytesRead == 0) {
+		stream->_feof = SO_EOF;
+		return SO_EOF;
+	}
 #elif defined(_WIN32)
 
 	BOOL ret = ReadFile(stream->_hFile, stream->_buffer_base, SO_BUFFER_SIZE, &numberOfBytesRead, NULL);
@@ -581,13 +653,14 @@ static int FillInternalBuffer(SO_FILE * stream) {
 	if (ret && numberOfBytesRead == 0) {
 		stream->_feof = SO_EOF;
 		return SO_EOF;
-	}	
+	}
 #else
 #error "Unknown platform"
 #endif
 
 	stream->_read_ptr_end = stream->_buffer_base + numberOfBytesRead;
 	stream->_read_ptr = stream->_buffer_base;
+	//write(STDOUT_FILENO,stream->_buffer_base,numberOfBytesRead);
 	return SO_TRUE;
 }
 static int WriteInternalBuffer(SO_FILE* stream)
@@ -600,7 +673,16 @@ static int WriteInternalBuffer(SO_FILE* stream)
 		return 0;
 
 #if defined(__linux__)
-																		 //dsadas
+	do {
+		numberBytesWritten = write(stream->_hFile,
+			stream->_buffer_base + numberBytesWrittenTotal,
+			numberBytesToWrite - numberBytesWrittenTotal);
+		if (numberBytesWritten == -1) {
+			PRINT_MY_ERROR("write - fflush");
+			return SO_EOF;
+		}
+		numberBytesWrittenTotal += numberBytesWritten;
+	} while (numberBytesWrittenTotal < numberBytesToWrite);
 #elif defined(_WIN32)
 	BOOL bRet;
 	do {
@@ -676,7 +758,7 @@ static int RedirectHandleWindows(STARTUPINFO* psi, HANDLE hFile, INT opt) {
 
 	return 0;
 }
-static HANDLE CreatePipeProcessWindows(const char* command,const char* mode) {
+static HANDLE CreatePipeProcessWindows(const char* command, const char* mode) {
 
 	SECURITY_ATTRIBUTES sa;
 	HANDLE hRead, hWrite; //pipe handles
@@ -703,7 +785,7 @@ static HANDLE CreatePipeProcessWindows(const char* command,const char* mode) {
 	}
 
 	if (strcmp(mode, "r") == 0) {
-	
+
 		ret = RedirectHandleWindows(&si, hRead, STD_INPUT_HANDLE);
 		if (ret == -1) {
 			PRINT_MY_ERROR("redirect handle windows");
@@ -752,11 +834,11 @@ static HANDLE CreatePipeProcessWindows(const char* command,const char* mode) {
 		return hRead;
 	}
 
-	 //DECI
-	 // Aici creez un nou proces. Ar trebui sa inchid handlerul pentru proces ? CloseHandle(pi.hProces) ???
-	 // Daca il inchid, nu inseamna ca proceesul copial si a terminat executia ? (ca ar trebui sa astept pana temrina inainte sa ii dau closehandle - Waitforsingleobject)
-	 //si daca il inchid aici, ce sens mai are handlerul de fisier care il returneaza functia ?
-	 
+	//DECI
+	// Aici creez un nou proces. Ar trebui sa inchid handlerul pentru proces ? CloseHandle(pi.hProces) ???
+	// Daca il inchid, nu inseamna ca proceesul copial si a terminat executia ? (ca ar trebui sa astept pana temrina inainte sa ii dau closehandle - Waitforsingleobject)
+	//si daca il inchid aici, ce sens mai are handlerul de fisier care il returneaza functia ?
+
 
 
 	return INVALID_HANDLE_VALUE;
@@ -788,7 +870,7 @@ static SO_FILE* OpenPipeProcessWindows(const char* command, const char* mode) {
 	file->_file_pointer_pos = 0;	//pozitia cursorului in fiser!
 
 	if (strcmp("mode", "r") == 0) {
-	
+
 		file->_canRead = SO_TRUE;
 		file->_canWrite = SO_FALSE;
 		file->_append = SO_FALSE;
