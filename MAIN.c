@@ -3,7 +3,7 @@
 #include <fileapi.h>
 
 
-int main() {
+int _main() {
 
 
 	SO_FILE* file = so_fopen("out.txt","a+");

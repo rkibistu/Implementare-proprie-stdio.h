@@ -1,0 +1,11 @@
+CC = cl
+L = link
+
+build: so_stdio.lib
+
+so_stdio.lib: so_stdio.dll
+
+so_stdio.dll: so_stdio.obj 
+
+clean:
+	del *.lib *.dll *.obj

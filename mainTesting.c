@@ -1,32 +1,34 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 
-int _main() {
+int main() {
 
 
-	FILE* file = fopen("out.txt", "r+");
-	if (file == NULL) {
+    char   psBuffer[128];
+    FILE* pPipe;
 
-		printf("error open");
-		return 0;
-	}
+    /* Run DIR so that it writes its output to a pipe. Open this
+     * pipe with read text attribute so that we can read it
+     * like a text file.
+     */
 
+    if ((pPipe = _popen("dir *.c /on /p", "rt")) == NULL)
+        exit(1);
 
-	size_t bytes_read;
-	char buf[10];
+    /* Read pipe until end of file, or an error occurs. */
 
-	
-	bytes_read = fread(buf, sizeof(buf), 1, file);
-	buf[9] = '\0';
-	printf("%d sir:\n%s", bytes_read, buf);
+    while (fgets(psBuffer, 128, pPipe))
+    {
+        puts(psBuffer);
+    }
 
-	//int* intarray = (int*)malloc(sizeof(int) * 5);
-	//fread((int*)intarray, sizeof(int), 5, file);
-
-	//for (int i = 0; i < 5; i++) {
-
-	//	printf("%d  ", intarray[i]);
-	//}
-
- 	fclose(file);
+    /* Close pipe and print return value of pPipe. */
+    if (feof(pPipe))
+    {
+        printf("\nProcess returned %d\n", _pclose(pPipe));
+    }
+    else
+    {
+        printf("Error: Failed to read the pipe to the end.\n");
+    }
 }

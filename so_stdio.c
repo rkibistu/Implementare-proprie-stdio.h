@@ -1,4 +1,3 @@
-
 #include "so_stdio.h"
 
 #define _DEBUG_
@@ -60,6 +59,17 @@ static int FillInternalBuffer(SO_FILE* stream);
 static int WriteInternalBuffer(SO_FILE* stream);
 
 
+#if defined(__linux__)
+
+
+#elif defined(_WIN32)
+static int RedirectHandleWindows(STARTUPINFO* psi, HANDLE hFile, INT opt);
+static HANDLE CreatePipeProcessWindows(const char* command, const char* mode);
+static SO_FILE* OpenPipeProcessWindows(const char* command, const char* mode);
+#else
+#error "Unknown platform"
+#endif
+
 
 SO_FILE* so_fopen(const char* pathname, const char* mode) {
 
@@ -103,7 +113,7 @@ SO_FILE* so_fopen(const char* pathname, const char* mode) {
 int so_fclose(SO_FILE* stream) {
 
 	if (stream == NULL)
-		return;
+		return -1;
 
 	so_fflush(stream);
 
@@ -113,9 +123,22 @@ int so_fclose(SO_FILE* stream) {
 	stream->_write_ptr = NULL;
 	stream->_buffer_end = NULL;
 
+
+#if defined(__linux__)
+	
+#elif defined(_WIN32)
+	CloseHandle(stream->_hFile);
+#else
+#error "Unknown platform"
+#endif
+	
 	free(stream);
 	stream = NULL;
+
+	return 0;
 }
+
+	
 
 #if defined(__linux__)
 int so_fileno(SO_FILE* stream) {
@@ -182,8 +205,8 @@ long so_ftell(SO_FILE* stream) {
 
 size_t so_fread(void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
-	int indexNmemb;
-	int indexSize;
+	size_t indexNmemb;
+	size_t indexSize;
 	size_t bytesReadTotal = 0;
 	char* element = (char*)malloc(sizeof(char) * size);
 	
@@ -211,7 +234,7 @@ size_t so_fread(void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 }
 size_t so_fwrite(const void* ptr, size_t size, size_t nmemb, SO_FILE* stream) {
 
-	int index;
+	size_t index;
 	int ret;
 	size_t bytesWrittenTotal = 0;
 
@@ -305,6 +328,52 @@ int so_feof(SO_FILE* stream) {
 }
 int so_ferror(SO_FILE* stream) {
 	return stream->_ferror;
+}
+
+SO_FILE* so_popen(const char* command, const char* type) {
+
+	SO_FILE* file = NULL;
+
+#if defined(__linux__)
+	//int hFile;
+
+#elif defined(_WIN32)
+	
+	file = OpenPipeProcessWindows(command, type);
+#else
+#error "Unknown platform"
+#endif
+
+	return file;
+	
+}
+int so_pclose(SO_FILE* stream) {
+
+	if (stream == NULL)
+		return -1;
+
+	so_fflush(stream);
+
+	free(stream->_buffer_base);
+
+	stream->_read_ptr = NULL;
+	stream->_write_ptr = NULL;
+	stream->_buffer_end = NULL;
+
+
+#if defined(__linux__)
+
+#elif defined(_WIN32)
+	CloseHandle(stream->_hFile);
+	//SI UNDE SE INCHIDE HANDLERUL DE PROCES ?
+#else
+#error "Unknown platform"
+#endif
+
+	free(stream);
+	stream = NULL;
+
+	return 0;
 }
 
 static SO_FILE*  OpenFileModeRead(const char* pathname) {
@@ -495,7 +564,6 @@ static SO_FILE* OpenFileModeAppendUpdate(const char* pathname) {
 }
 
 
-
 static int FillInternalBuffer(SO_FILE * stream) {
 
 	int numberOfBytesRead = 0;
@@ -555,5 +623,189 @@ static int WriteInternalBuffer(SO_FILE* stream)
 
 	return 0;
 }
+
+#if defined(__linux__)
+
+
+#elif defined(_WIN32)
+
+static int RedirectHandleWindows(STARTUPINFO* psi, HANDLE hFile, INT opt) {
+
+	HANDLE ret;
+
+	if (hFile == INVALID_HANDLE_VALUE)
+		return -1;
+
+	//preluam handlerurile
+	ret = GetStdHandle(STD_INPUT_HANDLE);
+	if (ret == INVALID_HANDLE_VALUE) {
+		PRINT_MY_ERROR("get input handle");
+		return -1;
+	}
+	psi->hStdInput = ret;
+
+	ret = GetStdHandle(STD_OUTPUT_HANDLE);
+	if (ret == INVALID_HANDLE_VALUE) {
+		PRINT_MY_ERROR("get output handle");
+		return -1;
+	}
+	psi->hStdOutput = ret;
+
+	ret = GetStdHandle(STD_ERROR_HANDLE);
+	if (ret == INVALID_HANDLE_VALUE) {
+		PRINT_MY_ERROR("get error handle");
+		return -1;
+	}
+	psi->hStdError = ret;
+
+	//sa se paote mosteni
+	psi->dwFlags = STARTF_USESTDHANDLES;
+
+	//redirectam unul din ele la hFile
+	switch (opt) {
+	case STD_INPUT_HANDLE:
+		psi->hStdInput = hFile;
+		break;
+	case STD_OUTPUT_HANDLE:
+		psi->hStdOutput = hFile;
+		break;
+	case STD_ERROR_HANDLE:
+		psi->hStdError = hFile;
+		break;
+	}
+
+	return 0;
+}
+static HANDLE CreatePipeProcessWindows(const char* command,const char* mode) {
+
+	SECURITY_ATTRIBUTES sa;
+	HANDLE hRead, hWrite; //pipe handles
+
+	STARTUPINFO si;				//process info
+	PROCESS_INFORMATION pi;
+	BOOL bRet;
+	int ret;
+
+	//initializam structurile
+	ZeroMemory(&sa, sizeof(sa));
+	sa.bInheritHandle = TRUE;
+
+	ZeroMemory(&pi, sizeof(pi));
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+
+
+	//creem pipe si redirectam input/output
+	bRet = CreatePipe(&hRead, &hWrite, &sa, 0);
+	if (bRet == 0) {
+		PRINT_MY_ERROR("Create pipe");
+		return INVALID_HANDLE_VALUE;
+	}
+
+	if (strcmp(mode, "r") == 0) {
+	
+		ret = RedirectHandleWindows(&si, hRead, STD_INPUT_HANDLE);
+		if (ret == -1) {
+			PRINT_MY_ERROR("redirect handle windows");
+			return INVALID_HANDLE_VALUE;
+		}
+	}
+	else if (strcmp(mode, "w") == 0) {
+
+		ret = RedirectHandleWindows(&si, hWrite, STD_OUTPUT_HANDLE);
+		if (ret == -1) {
+			PRINT_MY_ERROR("redirect handle windows");
+			return INVALID_HANDLE_VALUE;
+		}
+	}
+	else {
+		PRINT_MY_ERROR("wrong mode for pipe");
+		return INVALID_HANDLE_VALUE;
+	}
+
+	//creem proces cara sa executa commanda
+	bRet = CreateProcess(
+		NULL,
+		command,
+		NULL,
+		NULL,
+		TRUE,
+		0,
+		NULL,
+		NULL,
+		&si,
+		&pi
+	);
+	if (bRet == 0) {
+		PRINT_MY_ERROR("create proces");
+		return INVALID_HANDLE_VALUE;
+	}
+
+	if (strcmp(mode, "r") == 0) {
+
+		CloseHandle(hRead);
+		return hWrite;
+	}
+	else if (strcmp(mode, "w") == 0) {
+
+		CloseHandle(hWrite);
+		return hRead;
+	}
+
+	 //DECI
+	 // Aici creez un nou proces. Ar trebui sa inchid handlerul pentru proces ? CloseHandle(pi.hProces) ???
+	 // Daca il inchid, nu inseamna ca proceesul copial si a terminat executia ? (ca ar trebui sa astept pana temrina inainte sa ii dau closehandle - Waitforsingleobject)
+	 //si daca il inchid aici, ce sens mai are handlerul de fisier care il returneaza functia ?
+	 
+
+
+	return INVALID_HANDLE_VALUE;
+}
+static SO_FILE* OpenPipeProcessWindows(const char* command, const char* mode) {
+
+	SO_FILE* file = NULL;
+
+	HANDLE hFile = CreatePipeProcessWindows(command, mode);
+	if (hFile == INVALID_HANDLE_VALUE)
+		return NULL;
+
+	file = (SO_FILE*)malloc(sizeof(SO_FILE));
+
+
+	file->_hFile = hFile;
+
+	file->_buffer_base = (char*)malloc(sizeof(char) * SO_BUFFER_SIZE);
+	file->_buffer_end = file->_buffer_base + SO_BUFFER_SIZE;
+
+	file->_read_ptr = file->_buffer_base;
+	file->_read_ptr_end = file->_read_ptr;
+
+	file->_write_ptr = file->_buffer_base;
+	file->_write_ptr_end = file->_buffer_end;
+
+	file->_feof = SO_FALSE;
+
+	file->_file_pointer_pos = 0;	//pozitia cursorului in fiser!
+
+	if (strcmp("mode", "r") == 0) {
+	
+		file->_canRead = SO_TRUE;
+		file->_canWrite = SO_FALSE;
+		file->_append = SO_FALSE;
+		file->_update = SO_FALSE;
+	}
+	else if (strcmp("mode", "w") == 0) {
+
+		file->_canRead = SO_FALSE;
+		file->_canWrite = SO_TRUE;
+		file->_append = SO_FALSE;
+		file->_update = SO_FALSE;
+	}
+
+	return file;
+}
+#else
+#error "Unknown platform"
+#endif
 
 
