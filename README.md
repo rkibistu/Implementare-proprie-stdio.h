@@ -1,6 +1,4 @@
-# Tema2-SO
-Implementare proprie stdio.h
-
+# Implementare proprie stdio.h
 
   Scopul acestui proiect este aprofundarea conceptelor de:
     - I/O buffering
